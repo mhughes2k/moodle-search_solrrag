@@ -1,0 +1,10 @@
+Moodle requires a directory to store all of its files (all your site's uploaded files, temporary data, cache, session data etc.). The web server needs to be able to write to this directory. On larger systems consider how much free space you are going to use when allocating this directory.
+
+Due to the default way Moodle caches data you may have serious performance issues if you use relatively slow storage (e.g. NFS) for this directory. Read the Performance recommendations carefully and consider using (e.g.) redis or memcached for Caching.
+
+IMPORTANT: This directory must NOT be accessible directly via the web. This would be a serious security hole. Do not try to place it inside your web root or inside your Moodle program files directory. Moodle will not install. It can go anywhere else convenient.
+
+Here is an example (Unix/Linux) of creating the directory and setting the permissions for anyone on the server to write here. This is only appropriate for Moodle servers that are not shared. Discuss this with your server administrator for better permissions that just allow the web server user to access these files.
+
+# mkdir /path/to/moodledata
+# chmod 0777 /path/to/moodledata
