@@ -45,7 +45,15 @@ class document extends \search_solr\document {
             'type' => 'knn_vector_768', // this field def seems to be related to the size of the LLM embedding too :-(
             'stored' => true,
             'indexed' => true
-        ]
+        ],
+        // This is a fix for indexing so that we're not trying
+        // change from a NONE to a String.
+        'dc_title' => [
+            'type' => 'string',
+            'stored' => true,
+            'indexed' => true
+        ],
+
     );
 
     /**

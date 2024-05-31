@@ -34,7 +34,7 @@ if ($ADMIN->fulltree) {
             // Which AI Provider to use:
             $settings->add(new admin_setting_heading('search_solrrag_aiprovider',
                 new lang_string('aisettings', 'ai'), ''));
-            $providers = \core_ai\api::get_providers(
+            $providers = \local_ai\api::get_providers(
                 null,
                 true,
                 true

@@ -27,3 +27,6 @@ defined('MOODLE_INTERNAL') || die();
 $plugin->version = 2024030400;
 $plugin->requires = 2023100400;
 $plugin->component = 'search_solrrag';
+$plugin->dependencies = [
+//    'local_ai' => 2024052000
+];

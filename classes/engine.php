@@ -2,16 +2,17 @@
 
 namespace search_solrrag;
 
-use core_ai\api;
-use core_ai\LoggerAwareTrait;
+use local_ai\api;
+use local_ai\LoggerAwareTrait;
+use local_ai\LoggerAwareInterface;
 use search_solrrag\document;
 use search_solrrag\schema;
 
-use \core_ai\AIProvider;
-use \core_ai\aiclient;
-use \core_ai\AiException;
+use \local_ai\AIProvider;
+use \local_ai\aiclient;
+use \local_ai\AiException;
 
-class engine extends \search_solr\engine implements \core_ai\LoggerAwareInterface {
+class engine extends \search_solr\engine implements LoggerAwareInterface {
     use LoggerAwareTrait;
 
     /**
@@ -29,7 +30,9 @@ class engine extends \search_solr\engine implements \core_ai\LoggerAwareInterfac
         // then simply calling the API and get some results back...but we don't have that yet.
         // So we'll fudge this for the moment and leverage an OpenAI Web Service API via a simple HTTP request.
         $aiproviderid = get_config('search_solrrag', 'aiprovider');
-        $aiprovider = api::get_provider($aiproviderid);
+        if (false === ($aiprovider = api::get_provider($aiproviderid))) {
+            throw new \moodle_exception("providernotavailable", 'local_ai', $aiproviderid);
+        }
         $this->aiprovider = $aiprovider;
         $this->aiclient = !is_null($aiprovider)? new AIClient($aiprovider) : null;
         $this->setLogger($aiprovider->get_logger());
@@ -478,7 +481,7 @@ class engine extends \search_solr\engine implements \core_ai\LoggerAwareInterfac
         ) {
             // Do a vector similarity search.
             $this->logger->info("Running similarity search");
-            $this->logger->info("Fetching Vector for {userquery}", (array)$filters);
+            $this->logger->info("Fetching Vector for \"{userquery}\"", (array)$filters);
             $vector = $this->aiclient->embed_query($filters->userquery);
             $filters->vector = $vector;
             // We may get accessinfo, but we actually should determine our own ones to apply too
@@ -509,8 +512,11 @@ class engine extends \search_solr\engine implements \core_ai\LoggerAwareInterfac
      */
     public function execute_similarity_query(\stdClass $filters, \stdClass $accessinfo, int $limit = null) {
         $data = clone($filters);
-        $this->logger->info("Executing SOLR KNN QUery");
+        $returnemptydocs = $filters->returnemptydocs;        $this->logger->info("Executing SOLR KNN QUery");
         $vector = $filters->vector;
+        if (empty($vector)) {
+            throw new \coding_exception("Vector cannot be empty!");
+        }
         $topK = $limit > 0 ? $limit: 1; // We'll make the number of neighbours the same as search result limit.
 
         if (empty($limit)) {
@@ -635,8 +641,8 @@ class engine extends \search_solr\engine implements \core_ai\LoggerAwareInterfac
 
         $curl->setHeader('Content-type: application/json');
         $this->logger->info("Solr request: ".$requesturl->out(false));
-        $logparams =$params;
-        unset($logparams['query']); // unset query as it's got the full vector in it.
+        $logparams = $params;
+        //unset($logparams['query']); // unset query as it's got the full vector in it.
         $this->logger->info("Solr request params: ". json_encode($logparams));
         $result = $curl->post($requesturl->out(false), json_encode($params));
         $this->logger->info("Got SOLR result");
@@ -716,6 +722,9 @@ class engine extends \search_solr\engine implements \core_ai\LoggerAwareInterfac
                             if ($doc->is_set('content')) {
                                 $docs[] = $doc;
                             } else {
+                                if ($returnemptydocs) {
+                                    $docs[] = $doc;
+                                }
                                 $this->logger->info("Document {title} had no content in the end", ['title' => $doc->get('title')]);
                             }
                         }
