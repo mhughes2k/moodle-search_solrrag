@@ -9,6 +9,9 @@ It is necessary to add some fields to the solr configuration to define the vecto
 These fields need to match the length/dimension size of the vector result that your AI provider will return
 See https://platform.openai.com/docs/api-reference/embeddings/create for information on the dimensions for Open AI models.
 
+Different Open AI Embeddings can be found at https://platform.openai.com/docs/models/embeddings along with their output dimensions,
+but this may be different if you use a different AI backend.
+
 You can use something like Postman with the following POST request to set this up, to the 
 `http://localhost:8983/solr/<corename>/schema` end point:
 
