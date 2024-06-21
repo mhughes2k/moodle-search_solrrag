@@ -512,7 +512,8 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
      */
     public function execute_similarity_query(\stdClass $filters, \stdClass $accessinfo, int $limit = null) {
         $data = clone($filters);
-        $returnemptydocs = $filters->returnemptydocs;        $this->logger->info("Executing SOLR KNN QUery");
+        $returnemptydocs = $filters->returnemptydocs ?? false;
+        $this->logger->info("Executing SOLR KNN QUery");
         $vector = $filters->vector;
         if (empty($vector)) {
             throw new \coding_exception("Vector cannot be empty!");
