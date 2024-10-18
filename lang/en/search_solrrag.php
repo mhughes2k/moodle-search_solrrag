@@ -5,10 +5,13 @@ $string["pluginname"] = "Solr for Rag";
 // --solr strings
 $string['connectionerror'] = 'The specified Solr server is not available or the specified index does not exist';
 $string['connectionsettings'] = 'Connection settings';
+$string['disable'] = 'Disable';
 $string['errorcreatingschema'] = 'Error creating the Solr schema: {$a}';
 $string['errorvalidatingschema'] = 'Error validating Solr schema: field {$a->fieldname} does not exist. Please <a href="{$a->setupurl}">follow this link</a> to set up the required fields.';
 $string['errorsolr'] = 'The Solr search engine reported an error: {$a}';
 $string['extensionerror'] = 'The Apache Solr PHP extension is not installed. Please check the documentation.';
+$string['extractorpath'] = 'Extractor Path';
+$string['extractorpath_desc'] = 'Extractor Path Description';
 $string['fileindexing'] = 'Enable file indexing';
 $string['fileindexing_help'] = 'If your Solr install supports it, this feature allows Moodle to send files to be indexed.<br/>
 You will need to reindex all site contents after enabling this option for all files to be added.';

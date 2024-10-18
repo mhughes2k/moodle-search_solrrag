@@ -30,12 +30,22 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
         // then simply calling the API and get some results back...but we don't have that yet.
         // So we'll fudge this for the moment and leverage an OpenAI Web Service API via a simple HTTP request.
         $aiproviderid = get_config('search_solrrag', 'aiprovider');
-        if (false === ($aiprovider = api::get_provider($aiproviderid))) {
-            throw new \moodle_exception("providernotavailable", 'local_ai', $aiproviderid);
+        if (empty($aiproviderid)) {
+            return;
         }
-        $this->aiprovider = $aiprovider;
-        $this->aiclient = !is_null($aiprovider)? new AIClient($aiprovider) : null;
-        $this->setLogger($aiprovider->get_logger());
+        if (false === ($aiprovider = api::get_provider($aiproviderid))) {
+            if (isset($CFG->upgraderunning)) {
+                mtrace("Provider not available during upgrade");
+            } else {
+                \core\notification::add("Provider not available", \core\notification::WARNING);
+                //throw new \moodle_exception("providernotavailable", 'local_ai', $aiproviderid);
+            }
+        } else {
+            $this->aiprovider = $aiprovider;
+            $this->aiclient = !is_null($aiprovider) ? new AIClient($aiprovider) : null;
+            $this->setLogger($aiprovider->get_logger());
+        }
+
     }
 
     public function is_server_ready()
@@ -81,13 +91,44 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
         $this->logger->info("Adding document to search engine");
         if ($this->aiprovider->use_for_embeddings() && $this->aiclient) {
             $this->logger->info("Generating vector using document content");
-            $vector = $this->aiclient->embed_query($document['content']);
-            $vlength = count($vector);
-            $vectorfield = "solr_vector_" . $vlength;
-            $this->logger->info("Generated vector length: {length}, field: {field}", [
-                'length' => $vlength, 'field' => $vectorfield
-            ]);
-            $docdata[$vectorfield] = $vector;
+            // 1. Chunk $content in to parts based on some strategy
+            $this->logger->info("Splitting \"{$docdata['content']}");
+            $chunks = $this->chunk($docdata['content']);
+            $chunkcount = count($chunks);
+            $this->logger->info("{$chunkcount} chunks generated for {$docdata['title']}");
+            if ($chunkcount > 1) {
+                $filedocs = [];
+                // 2. Fetch an embedding for each part.
+                // 3. Add the main $filedoc, as well as each of the chunks, ensuring they
+                // have  a reference to the main $filedoc.
+                $i = 1;
+                foreach ($chunks as $chunk) {
+                    $chunkdoc = $docdata;
+                    $chunkdoc['content'] = $chunk;
+                    $this->logger->info("Getting vector for chunk {$i}/{$chunkcount}");
+                    $vector = $this->aiclient->embed_query($chunk);
+                    $vlength = count($vector);
+                    $vectorfield = "solr_vector_" . $vlength;
+                    $chunkdoc['id'] = $chunkdoc['id'] . "-chunk-{$i}";
+                    $chunkdoc[$vectorfield] = $vector;
+                    $filedocs[] = $chunkdoc;
+                    $i++;
+                }
+                $this->logger->info("Generated {$chunkcount} chunks for {$docdata['title']}({$docdata['id']})");
+                $docdatabatch[] = $docdata; // Add the "full" item.
+                foreach ($filedocs as $filedoc) {
+                    $docdatabatch[] = $filedoc;
+                }
+                $this->logger->info("Added {$chunkcount} filedocs to solr");
+            } else {
+                $vector = $this->aiclient->embed_query($document['content']);
+                $vlength = count($vector);
+                $vectorfield = "solr_vector_" . $vlength;
+                $this->logger->info("Generated vector length: {length}, field: {field}", [
+                        'length' => $vlength, 'field' => $vectorfield
+                ]);
+                $docdata[$vectorfield] = $vector;
+            }
         } else {
             $this->logger->warning("Wasn't able to generate a vector for document");
         }
@@ -115,22 +156,61 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
             if ($this->aiprovider->use_for_embeddings() && $this->aiclient) {
                 if (empty($doc['content'])) {
                     $this->logger->info("Empty doc {id} - {title}", ['id' => $doc['id'], 'title' => $doc['title']]);
-                }
-                $this->logger->info('Generating vector using provider');
-                $vector = $this->aiclient->embed_query($doc['content']);
-                $vlength = count($vector);
-                $vectorfield = "solr_vector_" . $vlength;
-                $doc[$vectorfield] = $vector;
-                $this->logger->info("Vector length {length} field {field}", [
-                    'length' => $vlength, 'field' => $vectorfield
-                ]);
-            } else {
-                $this->logger->info("Didn't do any vector stuff!");
-//                debugging("Err didn't do any vector stuff!");
-            }
-            $docdatabatch[] = $doc;
-        }
+                    // We'll still add the meta data.
+                    $docdatabatch[] = $doc;
+                } else {
+                    // TODO 1. Chunk $content in to parts based on some strategy
+                    $this->logger->info("Splitting \"{$doc['content']}");
+                    $chunks = $this->chunk($doc['content']);
+                    $chunkcount = count($chunks);
+                    $this->logger->info("{$chunkcount} chunks generated for {$doc['title']}");
+                    if ($chunkcount > 1) {
+                        // TODO 2. Fetch an embedding for each part.
+                        // TODO 3. Add the main $filedoc, as well as each of the chunks, ensuring they
+                        // have  a reference to the main $filedoc.
+                        $i = 1;
+                        foreach ($chunks as $chunk) {
+                            $chunkdoc = $doc;
+                            $chunkdoc['content'] = $chunk;
+                            $this->logger->info("Getting vector for chunk {$i}/{$chunkcount}");
+                            $vector = $this->aiclient->embed_query($chunk);
+                            $vlength = count($vector);
+                            $vectorfield = "solr_vector_" . $vlength;
+                            $chunkdoc['id'] = $chunkdoc['id'] . "-chunk-{$i}";
+                            $chunkdoc[$vectorfield] = $vector;
+                            $filedocs[] = $chunkdoc;
+                            $i++;
+                        }
 
+                        $this->logger->info("Generated {$chunkcount} chunks for {$doc['title']}({$doc['id']})");
+                        $docdatabatch[] = $doc; // Add the "full" item.
+                        foreach ($filedocs as $filedoc) {
+                            $docdatabatch[] = $filedoc;
+                        }
+                        $this->logger->info("Added {$chunkcount} filedocs to solr");
+                    } else {
+                        $this->logger->info('Using full content');
+                        $this->logger->info('Generating vector using provider');
+                        $vector = $this->aiclient->embed_query($doc['content']);
+                        $vlength = count($vector);
+                        $vectorfield = "solr_vector_" . $vlength;
+                        $doc[$vectorfield] = $vector;
+                        $this->logger->info("Vector length {length} field {field}", [
+                                'length' => $vlength, 'field' => $vectorfield
+                        ]);
+                        $docdatabatch[] = $doc;
+                    }
+                }
+            } else {
+                    $this->logger->info("Didn't do any vector stuff!");
+                    $docdatabatch[] = $doc;
+            }
+        }
+        if (empty($docdatabatch)) {
+            echo('no docs');
+            //var_dump($documents);
+            //exit();
+        }
         $resultcounts = $this->add_solr_documents($docdatabatch);
 
         // Files are processed one document at a time (if there are files it's slow anyway).
@@ -156,9 +236,11 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
     protected function add_solr_documents(array $docs): array {
         $solrdocs = [];
         foreach ($docs as $doc) {
-            $solrdocs[] = $this->create_solr_document($doc);
+            //var_dump($doc);
+            $solrdoc = $this->create_solr_document($doc);
+            //var_dump($solrdoc);
+            $solrdocs[] = $solrdoc;
         }
-
         try {
             // Add documents in a batch and report that they all succeeded.
             $this->get_search_client()->addDocuments($solrdocs, true, static::AUTOCOMMIT_WITHIN);
@@ -232,6 +314,7 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
      * @return void
      */
     protected function add_stored_file($document, $storedfile) {
+        $this->logger->debug("Entering engine::add_stored_file()");
         $this->logger->info("Adding stored file {name} to document {document}", [
             "name" => $storedfile->get_filename(),
             "document" => "TBD"
@@ -344,6 +427,7 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
                                 $this->logger->debug($result);
 
                             } else {
+                                $filedocs = []; // We could end up with multiple filedocs if the content is large and needs to be chunked.
                                 $this->logger->info('document extracted successfully');
                                 $xmlcontent = html_entity_decode($streamcontent[1]);
                                 $this->logger->debug($xmlcontent);
@@ -362,7 +446,6 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
                                                 $filedoc[$name] = $content;
                                             } else {
                                                 $filedoc[$name] = "";
-
                                             }
                                         }
                                         // Note a successful extraction in the log
@@ -377,29 +460,76 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
                                     // via the export_file_for_engine() call above, that has no awareness of the engine.
                                     // We expect $filedoc['content'] to be set.
                                     if(isset($filedoc['content'])) {
-                                        $this->logger->info("Extracting vector from content {$content}", $filedoc);
-                                        $vector = $this->aiclient->embed_query($filedoc['content']);
-                                        $vlength = count($vector);
-                                        $vectorfield = "solr_vector_" . $vlength;
-                                        $filedoc[$vectorfield] = $vector;
-                                        $this->logger->info("Generated vector length: {length}, field: {field}", [
-                                            'length' => $vlength, 'field' => $vectorfield
-                                        ]);
+                                        $this->logger->info("Processing stored file content");
+                                        // TODO 1. Chunk $content in to parts based on some strategy
+                                        $contextlength = self::CHUNK_SIZE;
+                                                //$this->aiprovider->get('aimaxcontext');
+                                        $contentlength = strlen($filedoc['content']);
+                                        $this->logger->info("Content length: {$contentlength} - {$filedoc['title']}" );
+                                        if ($contentlength > $contextlength) {
+                                            $this->logger->warning("{$filedoc['title']} is longer ({$contentlength}) that context window ({$contextlength})");
+                                        }
+
+                                        $this->logger->info("Splitting stored file content");   // Removed actual content to constrain size.
+                                        $chunks = $this->chunk($filedoc['content']);
+                                        $chunkcount = count($chunks);
+                                        $this->logger->info("Split {$filedoc['title']} in to {$chunkcount} chunks.");
+                                        if ($chunkcount > 1) {
+                                            $this->logger->info("Processing {$filedoc['title']} chunks.");
+                                            // TODO 2. Fetch an embedding for each part.
+                                            // TODO 3. Add the main $filedoc, as well as each of the chunks, ensuring they
+                                            // have  a reference to the main $filedoc.
+                                            $i = 1;
+                                            foreach($chunks as $chunk) {
+                                                $chunkdoc = $filedoc;
+                                                $chunkdoc['content'] = $chunk;
+                                                $this->logger->info("Getting vector for chunk {$i}/{$chunkcount}");
+                                                $vector = $this->aiclient->embed_query($chunk);
+                                                $vlength = count($vector);
+                                                $vectorfield = "solr_vector_" . $vlength;
+                                                $chunkdoc[$vectorfield] = $vector;
+                                                $chunkdoc['id'] = $chunkdoc['id'] . "-chunk-{$i}";
+                                                $filedocs[] = $chunkdoc;
+                                                $i++;
+                                            }
+
+                                            $this->logger->info("Generated {$chunkcount} chunks for stored file {$filedoc['title']}");
+                                            foreach($filedocs as $filedoc) {
+                                                $this->add_solr_document($filedoc);
+                                            }
+                                            $this->logger->info("Added {$chunkcount} filedocs to solr");
+                                            // We don't return here, so that the "main" $filedoc also gets added.
+                                        } else {
+                                            $this->logger->info("Processing {$filedoc['title']} whole content.");
+                                            // This handles a chunk count of 1 or 0. 0 would be very odd!
+                                            // Either way we can just store the content.
+                                            $vector = $this->aiclient->embed_query($filedoc['content']);
+                                            $vlength = count($vector);
+                                            $vectorfield = "solr_vector_" . $vlength;
+                                            $filedoc[$vectorfield] = $vector;
+                                            $this->logger->info("Generated vector length: {length}, field: {field}", [
+                                                    'length' => $vlength, 'field' => $vectorfield
+                                            ]);
+                                        }
                                     } else {
                                         $this->logger->info("Document had no content", $filedoc);
                                     }
                                     $this->logger->info("Solr dor: {doc}", ["doc" => print_r($filedoc,true)]);
                                 } catch (\Exception $e) {
                                     $this->logger->error("Error parsing XML from solr");
-                                    $this->logger->debug($xmlcontent);
+                                    //$this->logger->debug($xmlcontent);
                                 }
-
                             }
+                            // We can add either the document with content or without.
+                            $this->logger->info("Adding document to search index.");
+                            $this->add_solr_document($filedoc);
+                            return;
+                        } else {
+                            // We can add either the document with content or without.
+                            $this->logger->info("Adding document to search index.");
+                            $this->add_solr_document($filedoc);
+                            return;
                         }
-                        // We can add either the document with content or without.
-                        $this->logger->info("Adding document to search index.");
-                        $this->add_solr_document($filedoc);
-                        return;
                     }
                 } else {
                     // We received an unprocessable response.
@@ -462,6 +592,14 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
                 $value = "{$value}";
             }
             $solrdoc->addField($field, $value);
+        }
+        // We need to consider that the content is bigger than the AI's context window.
+        $contextlength = $this->aiprovider->get('aimaxcontext');
+        $contentlength = strlen($doc['content']);
+        if ($contentlength > $contextlength) {
+            $title = $doc['title'] ?? "-";
+            $this->logger->warning("{$title} is longer ({$contentlength}) that context window ({$contextlength})");
+            // TODO we'll have to worry about this in a bit.
         }
 
         return $solrdoc;
@@ -533,13 +671,13 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
         $filterqueries = [];
         if(!empty($data->areaids)) {
             $r = '{!cache=false}areaid:(' . implode(' OR ', $data->areaids) . ')';
-            $this->logger->info("Attaching areid restriction: {areaid}", ['areaid' => $r]);
+            $this->logger->info("Attaching areaid restriction: {areaid}", ['areaid' => $r]);
             $filterqueries[] = $r;
         }
         $r = null;
         if(!empty($data->excludeareaids)) {
             $r ='{!cache=false}-areaid:(' . implode(' OR ', $data->excludeareaids) . ')';
-            $this->logger->info("Attaching areid restriction: {areaid}", ['areaid' => $r]);
+            $this->logger->info("Attaching areaid restriction: {areaid}", ['areaid' => $r]);
             $filterqueries[] = $r;
         }
         $r = null;
@@ -631,6 +769,7 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
         $curl = $this->get_curl_object();
         $requesturl = $this->get_connection_url('/select');
 //        $requesturl->param('fl', 'id,areaid,score,content, title');
+        $requesturl->param('fl', '*,score');
         // Title is added on the end so we didn't have to recode some indexes below.
         $requesturl->param('wt', 'xml');
         foreach($qsparams as $qs => $value) {
@@ -647,7 +786,7 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
         $this->logger->info("Solr request params: ". json_encode($logparams));
         $result = $curl->post($requesturl->out(false), json_encode($params));
         $this->logger->info("Got SOLR result");
-
+$this->logger->debug($result);
         // Probably have to duplicate error handling code from the add_stored_file() function.
         $code = $curl->get_errno();
         $info = $curl->get_info();
@@ -695,13 +834,14 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
                         $this->logger->info("File indexing enabled");
                         // We'll just grab all of the <doc> elements that were found.
                         $results = $xml->xpath("//doc");
-//                        $this->logger->debug(print_r($results, true));
+                        //$this->logger->debug(print_r($results, true));
                     } else {
                         $results = $xml->result->doc;
-//                        $this->logger->debug($result);
+                        //$this->logger->debug($result);
                     }
                     $docs = [];
                     $titles = [];
+                    $contextlength = $this->aiprovider->get('aimaxcontext');
                     if (!empty($results)) {
 //                        echo "<pre>";
                         foreach ($results as $result) {
@@ -715,12 +855,23 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
                             }
                             $this->logger->debug("Outputting similarity search results");
                             $this->logger->debug(print_r($doc, true));
+
                             $searcharea = $this->get_search_area($doc['areaid']);
                             $titles[] = $doc['title'];
+
+                            $score = $doc['score'] ?? null;
+                            $this->logger->info("{$doc['title']}score: {$score}");
                             $doc = $this->to_document($searcharea, $doc);
 
                             // we're now a "Document" object, so check for content.
                             if ($doc->is_set('content')) {
+                                // Drop content > context length...it's rough but...
+                                $contentlength = strlen($doc->get('content'));
+                                if ($contentlength > $contextlength) {
+                                    // TODO We need a better strategy, but we'll work within what we have with SOLR and global search.
+                                    $this->logger->warning("Dropping {$doc['title']} as it is larger than the context ({$contentlength} vs {$contextlength}");
+                                    continue;
+                                }
                                 $docs[] = $doc;
                             } else {
                                 if ($returnemptydocs) {
@@ -732,6 +883,9 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
 //                        echo "</pre>";
                         // Just for audit/debugging we output the list of resource titles.
                         $this->logger->info("Document titles: {titles}", ['titles'=> implode(",", $titles)]);
+                        foreach ($docs as $doc) {
+                            $this->logger->info($doc->get('content'));
+                        }
                     } else {
                         $this->logger->info("No results found");
                     }
@@ -866,5 +1020,21 @@ class engine extends \search_solr\engine implements LoggerAwareInterface {
         foreach ($files as $file) {
             $this->add_stored_file($document, $file);
         }
+    }
+
+    /**
+     * Arbitrary chunk size.
+     */
+    const CHUNK_SIZE = 2048;
+    /**
+     * Split the content and return an array of content bits
+     * @param $content
+     * @return array
+     */
+    public function chunk($content) {
+        $chunks = str_split($content, engine::CHUNK_SIZE);
+        //$chunks = mb_str_split($content, engine::CHUNK_SIZE);
+        $this->logger->debug(print_r($chunks, true));
+        return $chunks;
     }
 }

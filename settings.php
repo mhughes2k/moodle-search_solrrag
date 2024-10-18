@@ -32,15 +32,19 @@ if ($ADMIN->fulltree) {
 
         } else {
             // Which AI Provider to use:
-            $settings->add(new admin_setting_heading('search_solrrag_aiprovider',
-                new lang_string('aisettings', 'ai'), ''));
+            $settings->add(new admin_setting_heading(
+            'search_solrrag_aiprovider',
+                new lang_string('aisettings', 'search_solrrag'),
+                    //"AI Setting",
+                    'info'
+            ));
             $providers = \local_ai\api::get_providers(
                 null,
                 true,
                 true
             );
             $optproviders = [
-                '' => get_string('disable', 'ai')
+                '' => get_string('disable', 'search_solrrag')
             ];
 
             foreach($providers as $provider) {

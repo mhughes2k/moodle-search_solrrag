@@ -144,21 +144,35 @@ class schema extends \search_solr\schema
         }
 
     }
-//    public function can_setup_server() {
-//print_r($this->engine);
-//        $status = $this->engine->is_server_configured();
-//        if ($status !== true) {
-//            return $status;
-//        }
-//
-//        // At this stage we know that the server is properly configured with a valid host:port and indexname.
-//        // We're not too concerned about repeating the SolrClient::system() call (already called in
-//        // is_server_configured) because this is just a setup script.
-//        if ($this->engine->get_solr_major_version() < 5) {
-//            // Schema setup script only available for 5.0 onwards.
-//            return get_string('schemasetupfromsolr5', 'search_solr');
-//        }
-//
-//        return true;
-//    }
+    /**
+     * Returns the solr field type from the document field type string.
+     *
+     * Replicated due to "private" function marking!
+     * @see \search_solr\schema
+     * @param string $datatype
+     * @return string
+     */
+    private function doc_field_to_solr_field($datatype) {
+        $type = $datatype;
+
+        $solrversion = $this->engine->get_solr_major_version();
+
+        switch($datatype) {
+            case 'text':
+                $type = 'text_general';
+                break;
+            case 'int':
+                if ($solrversion >= 7) {
+                    $type = 'pint';
+                }
+                break;
+            case 'tdate':
+                if ($solrversion >= 7) {
+                    $type = 'pdate';
+                }
+                break;
+        }
+
+        return $type;
+    }
 }

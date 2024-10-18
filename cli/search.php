@@ -12,6 +12,7 @@ Options:
     -h, --help                      Print this help
     -p, --provider=<provider_id>    AI provider ID
     -c, --course=<courseid>         Course ID
+    -a, --chat=<chatcmid>           Chat activity CMID
     -u, --user=<userid>             User (id) to execute as
     -q, --query=<query>             Search query
     -v, --verbose                   Verbose output
@@ -21,6 +22,7 @@ Options:
     'help' => false,
     'query' => null,
     'course' => null,
+    'chat' => null, // 'chat cm id
     'user' => null,
     'provider' => null,
     'verbose' => false,
@@ -29,6 +31,7 @@ Options:
     'h' => 'help',
     'q' => 'query',
     'c' => 'course',
+    'a' => 'chat cm id',
     'u' => 'user',
     'p' => 'provider',
     'v' => 'verbose',
@@ -66,11 +69,15 @@ if ($options['course']) {
 $user = core_user::get_user($options['user']);
 \core\session\manager::set_user($user);
 
+if (empty($options['chat'])) {
+    cli_error("The chat activity CMID is required");
+}
+
 $search = \core_search\manager::instance(true, true);
 
 $provider = local_ai\api::get_provider($options['provider']);
 
-[$cmcourse,$cm] = get_course_and_cm_from_cmid(129);
+[$cmcourse,$cm] = get_course_and_cm_from_cmid($options['chat']);
 
 $settings = $provider->get_settings_for_user($cm, $user);
 $settings['userquery'] = $query;
@@ -88,9 +95,11 @@ $veryverbose = $options['veryverbose'];
 $maxlength = 150; // Make option.
 $omit = ['id','itemid', 'title', 'content'];
 foreach($results as $doc) {
+    //var_dump($doc);
     cli_writeln("SOLR id: {$doc->get('id')}");
     cli_writeln("itemid: {$doc->get('itemid')}");
     cli_writeln("Title: {$doc->get('title')}");
+    cli_writeln("Score: {$doc->get('score')}");
     if ($doc->is_set('content')) {
         if ($verbose) {
 
